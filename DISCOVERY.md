@@ -8,7 +8,7 @@
 - Foundation is a deterministic analytics layer (plain SQL, not AI): revenue, margin and
   footfall per shop, category margin in dollars, baristas benchmarked within their shop,
   shop-level ratings.
-- One AI feature worth building: classify negative reviews (1-3 stars) into themes. Real signal
+- One AI feature worth building: classify negative reviews (1-2 stars) into themes. Real signal
   exists (Riverside has a milk-quality cluster, avg rating 3.21).
 - Prioritized first by a hard gate (is the answer actually in the text), then by margin dollars
   protected.
@@ -57,7 +57,7 @@ Campus.
 
 ## 1. AI-driven opportunities
 
-**Opp1, classify negative reviews (1-3 stars).** Reads `reviews.text` + `rating`, assigns a
+**Opp1, classify negative reviews (1-2 stars).** Reads `reviews.text` + `rating`, assigns a
 theme (milk, wait, noise, accuracy, pricing, staff), groups by shop and window. The dashboard
 shows reviews verbatim but cannot tell a dozen complaints are one problem. Real instance:
 Riverside, lowest avg rating (3.21), ~13 spoiled-milk reviews Oct-Dec 2025. Value: scattered low
@@ -98,7 +98,7 @@ reliability and UX instead).
 ## 3. Architectural sketch of the top 3
 
 **Top 1, classify reviews.** AI touches one step only: review text -> theme label. Selecting the
-1-3 star reviews and all aggregation and ranking after it is deterministic SQL, so the headline
+1-2 star reviews and all aggregation and ranking after it is deterministic SQL, so the headline
 numbers stay reproducible. Data: `reviews.text/rating/shop_id/ts`, nothing new. Cache by review
 id (reviews are immutable, never classified twice). Guardrails: closed theme set + explicit
 `unknown`, structured output validated against the set, hard scope limit so it never infers why

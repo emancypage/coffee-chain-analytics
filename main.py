@@ -360,7 +360,7 @@ def stats_barista(
 ANALYTICS_DEFAULT_DAYS = 90
 
 # Reviews at or below this rating are treated as negative and fed to the classifier.
-REVIEW_NEGATIVE_MAX = 3
+REVIEW_NEGATIVE_MAX = 2
 
 
 def _safe_div(num, den):

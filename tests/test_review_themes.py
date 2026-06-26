@@ -43,7 +43,7 @@ def populated_cache(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     reviews = [
         (r["id"], r["text"])
-        for r in conn.execute("SELECT id, text FROM reviews WHERE rating <= 3")
+        for r in conn.execute("SELECT id, text FROM reviews WHERE rating <= 2")
     ]
     conn.close()
 

@@ -1,4 +1,4 @@
-"""Batch runner: classify all negative reviews (rating <= 3) and cache results.
+"""Batch runner: classify all negative reviews (rating <= 2) and cache results.
 
 Usage:
     OPENAI_API_KEY=sk-... python -m ai.classify
@@ -61,7 +61,7 @@ def main() -> None:
     # Open coffee.db read-only; we never write to it.
     conn = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT id, text FROM reviews WHERE rating <= 3").fetchall()
+    rows = conn.execute("SELECT id, text FROM reviews WHERE rating <= 2").fetchall()
     conn.close()
 
     reviews = [(row["id"], row["text"]) for row in rows]

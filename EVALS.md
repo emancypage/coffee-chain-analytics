@@ -4,7 +4,7 @@ How I would measure the production quality of the review-theme classifier if it 
 
 ## What is being evaluated
 
-A single-label classifier: one negative review (rating <= 3) to one theme from a closed set
+A single-label classifier: one negative review (rating <= 2) to one theme from a closed set
 (`dairy`, `wait_time`, `noise`, `order_accuracy`, `pricing`, `staff`, `wifi`, `seating`,
 `other`, `unknown`). Everything downstream (counting, grouping, ranking per shop) is
 deterministic SQL and does not need model evaluation. The only thing to measure is the label.
@@ -58,6 +58,6 @@ the same code runs against OpenRouter or a local Ollama server). It is strong en
 constrained single-label classification with JSON output, and the cheapest tier that is.
 
 Cost is about $0.0001 per review classified (roughly 450 input plus 30 output tokens at
-gpt-4o-mini rates), so the full 82 negative reviews cost under one cent. Latency is sub-second to
+gpt-4o-mini rates), so the 45 negative reviews cost under one cent. Latency is sub-second to
 about two seconds per call. Classification is an offline batch cached by review id, so the cost
 is paid once per (review, prompt version) and never sits on the dashboard request path.
