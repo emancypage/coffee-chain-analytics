@@ -891,7 +891,7 @@ function renderThemes(res) {
   if (!tot || tot.negative_reviews === 0) {
     cov.textContent = 'No negative reviews in this period';
   } else if (tot.classified === 0) {
-    cov.innerHTML = `0 / ${tot.negative_reviews} classified — run <code>python -m ai.classify</code> to populate (model ${esc(res.model)})`;
+    cov.innerHTML = `0 / ${tot.negative_reviews} classified. Run <code>python -m ai.classify</code> to populate (model ${esc(res.model)}).`;
   } else {
     cov.textContent = `${tot.classified} / ${tot.negative_reviews} negative reviews classified · model ${res.model}, prompt ${res.prompt_version}`
       + (tot.unclassified ? ` · ${tot.unclassified} pending` : '');
