@@ -6,6 +6,7 @@ Candidates are expected to identify where AI adds value and implement it.
 
 import subprocess
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -342,6 +343,315 @@ def stats_barista(
         params,
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Deterministic analytics layer.
+#
+# Plain arithmetic over the existing tables, no model involved. Reports what is
+# happening per shop, category, and barista for a selected period, plus the change
+# versus the previous equal-length period. Explaining the cause is out of scope here:
+# this layer is the substrate later AI features read from.
+# ---------------------------------------------------------------------------
+
+ANALYTICS_DEFAULT_DAYS = 90
+
+
+def _safe_div(num, den):
+    return round(num / den, 2) if den else None
+
+
+def _pct(num, den):
+    return round(num / den * 100, 1) if den else None
+
+
+def _delta(cur, prev):
+    """Period-over-period percent change. None when there is no prior baseline."""
+    return round((cur - prev) / prev * 100, 1) if prev else None
+
+
+def _resolve_window(conn, date_from, date_to):
+    """Resolve the current and previous comparison windows as ISO date strings.
+
+    With no range, the current window is the trailing ANALYTICS_DEFAULT_DAYS of data.
+    The previous window is always the equal-length span immediately before the current one,
+    so the same comparison logic works whether or not the caller passes explicit dates.
+    """
+    row = conn.execute(
+        "SELECT MIN(date(ts)) AS lo, MAX(date(ts)) AS hi FROM transactions"
+    ).fetchone()
+    lo, hi = row["lo"], row["hi"]
+    if lo is None:
+        return None
+    if date_from is None and date_to is None:
+        cur_to = date.fromisoformat(hi)
+        cur_from = cur_to - timedelta(days=ANALYTICS_DEFAULT_DAYS - 1)
+    else:
+        cur_from = date.fromisoformat(date_from) if date_from else date.fromisoformat(lo)
+        cur_to = date.fromisoformat(date_to) if date_to else date.fromisoformat(hi)
+    span = (cur_to - cur_from).days
+    prev_to = cur_from - timedelta(days=1)
+    prev_from = prev_to - timedelta(days=span)
+    return {
+        "data_min": lo,
+        "data_max": hi,
+        "from": cur_from.isoformat(),
+        "to": cur_to.isoformat(),
+        "prev_from": prev_from.isoformat(),
+        "prev_to": prev_to.isoformat(),
+        "days": span + 1,
+    }
+
+
+def _shop_rows(conn, d_from, d_to):
+    """Per-shop totals for one window. Shops with no sales in the window still appear
+    (the date filter lives inside the CTE, so the LEFT JOIN is not collapsed to an inner one)."""
+    return conn.execute(
+        """
+        WITH win AS (
+            SELECT t.id, t.shop_id,
+                   ti.quantity AS q, ti.unit_price AS up, mi.cost AS cost
+            FROM transactions t
+            JOIN transaction_items ti ON ti.transaction_id = t.id
+            JOIN menu_items mi ON mi.id = ti.menu_item_id
+            WHERE date(t.ts) BETWEEN ? AND ?
+        )
+        SELECT s.id, s.name,
+               COUNT(DISTINCT win.id) AS tx,
+               COALESCE(ROUND(SUM(win.q * win.up), 2), 0) AS revenue,
+               COALESCE(ROUND(SUM(win.q * win.cost), 2), 0) AS cogs,
+               COALESCE(ROUND(SUM(win.q * (win.up - win.cost)), 2), 0) AS margin,
+               COALESCE(SUM(win.q), 0) AS units
+        FROM shops s
+        LEFT JOIN win ON win.shop_id = s.id
+        GROUP BY s.id
+        ORDER BY revenue DESC
+        """,
+        (d_from, d_to),
+    ).fetchall()
+
+
+@app.get("/api/analytics/overview")
+def analytics_overview(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    conn=Depends(get_conn),
+):
+    """Chain and per-shop scorecard for a period, with change vs the previous period."""
+    win = _resolve_window(conn, date_from, date_to)
+    if win is None:
+        return {"period": None, "chain": None, "shops": []}
+
+    cur = list(_shop_rows(conn, win["from"], win["to"]))
+    prev = {r["id"]: r for r in _shop_rows(conn, win["prev_from"], win["prev_to"])}
+    chain_rev = sum(r["revenue"] for r in cur)
+
+    # Reviews are recorded per shop only (no barista or product link), so ratings can be
+    # aggregated to the shop but not to a category or a barista. Period-aware; the review
+    # count is returned alongside because reviews are sparse and a small sample can mislead.
+    ratings = {
+        r["shop_id"]: r
+        for r in conn.execute(
+            "SELECT shop_id, COUNT(*) AS n, ROUND(AVG(rating), 2) AS avg_rating "
+            "FROM reviews WHERE date(ts) BETWEEN ? AND ? GROUP BY shop_id",
+            (win["from"], win["to"]),
+        ).fetchall()
+    }
+
+    shops = []
+    for r in cur:
+        p = prev.get(r["id"])
+        rv = ratings.get(r["id"])
+        shops.append(
+            {
+                "shop_id": r["id"],
+                "name": r["name"],
+                "tx": r["tx"],
+                "revenue": r["revenue"],
+                "cogs": r["cogs"],
+                "gross_margin": r["margin"],
+                "gross_margin_pct": _pct(r["margin"], r["revenue"]),
+                "avg_ticket": _safe_div(r["revenue"], r["tx"]),
+                "items_per_tx": _safe_div(r["units"], r["tx"]),
+                "revenue_share_pct": _pct(r["revenue"], chain_rev),
+                "revenue_delta_pct": _delta(r["revenue"], p["revenue"] if p else 0),
+                "margin_delta_pct": _delta(r["margin"], p["margin"] if p else 0),
+                "avg_rating": rv["avg_rating"] if rv else None,
+                "review_count": rv["n"] if rv else 0,
+            }
+        )
+
+    chain: dict = {
+        "tx": sum(r["tx"] for r in cur),
+        "revenue": round(chain_rev, 2),
+        "cogs": round(sum(r["cogs"] for r in cur), 2),
+        "gross_margin": round(sum(r["margin"] for r in cur), 2),
+        "units": sum(r["units"] for r in cur),
+    }
+    chain["gross_margin_pct"] = _pct(chain["gross_margin"], chain["revenue"])
+    chain["avg_ticket"] = _safe_div(chain["revenue"], chain["tx"])
+    chain["items_per_tx"] = _safe_div(chain["units"], chain["tx"])
+    chain["revenue_delta_pct"] = _delta(chain["revenue"], sum(r["revenue"] for r in prev.values()))
+    chain["margin_delta_pct"] = _delta(chain["gross_margin"], sum(r["margin"] for r in prev.values()))
+    chain_reviews = conn.execute(
+        "SELECT COUNT(*) AS n, ROUND(AVG(rating), 2) AS avg_rating "
+        "FROM reviews WHERE date(ts) BETWEEN ? AND ?",
+        (win["from"], win["to"]),
+    ).fetchone()
+    chain["avg_rating"] = chain_reviews["avg_rating"]
+    chain["review_count"] = chain_reviews["n"]
+
+    return {"period": win, "chain": chain, "shops": shops}
+
+
+@app.get("/api/analytics/categories")
+def analytics_categories(
+    shop_id: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    conn=Depends(get_conn),
+):
+    """Category contribution, ranked by absolute margin dollars for the period.
+
+    Revenue share and margin share are reported alongside so a high margin percentage on a
+    small-dollar category does not read as a priority. The ranking is recomputed per period."""
+    win = _resolve_window(conn, date_from, date_to)
+    if win is None:
+        return {"period": None, "categories": []}
+
+    params: list = [win["from"], win["to"]]
+    shop_clause = ""
+    if shop_id is not None:
+        shop_clause = "AND t.shop_id = ?"
+        params.append(shop_id)
+
+    rows = conn.execute(
+        f"""
+        WITH win AS (
+            SELECT mi.category AS cat, ti.quantity AS q,
+                   ti.unit_price AS up, mi.cost AS cost
+            FROM transactions t
+            JOIN transaction_items ti ON ti.transaction_id = t.id
+            JOIN menu_items mi ON mi.id = ti.menu_item_id
+            WHERE date(t.ts) BETWEEN ? AND ? {shop_clause}
+        )
+        SELECT cats.category,
+               COALESCE(SUM(win.q), 0) AS units,
+               COALESCE(ROUND(SUM(win.q * win.up), 2), 0) AS revenue,
+               COALESCE(ROUND(SUM(win.q * (win.up - win.cost)), 2), 0) AS margin
+        FROM (SELECT DISTINCT category FROM menu_items) cats
+        LEFT JOIN win ON win.cat = cats.category
+        GROUP BY cats.category
+        ORDER BY margin DESC
+        """,
+        params,
+    ).fetchall()
+
+    total_rev = sum(r["revenue"] for r in rows)
+    total_margin = sum(r["margin"] for r in rows)
+    categories = [
+        {
+            "category": r["category"],
+            "units": r["units"],
+            "revenue": r["revenue"],
+            "margin": r["margin"],
+            "margin_pct": _pct(r["margin"], r["revenue"]),
+            "revenue_share_pct": _pct(r["revenue"], total_rev),
+            "margin_share_pct": _pct(r["margin"], total_margin),
+        }
+        for r in rows
+    ]
+    return {"period": win, "categories": categories}
+
+
+@app.get("/api/analytics/baristas")
+def analytics_baristas(
+    shop_id: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    conn=Depends(get_conn),
+):
+    """Per-barista performance, benchmarked within the barista's own shop.
+
+    In this dataset a barista only ever works their primary shop, so a chain-wide comparison
+    would confound barista behaviour with shop location. Attach rate (items and pastries per
+    transaction) isolates the behaviour better than average ticket alone."""
+    win = _resolve_window(conn, date_from, date_to)
+    if win is None:
+        return {"period": None, "baristas": []}
+
+    params: list = [win["from"], win["to"]]
+    txw_shop = ""
+    barista_shop = ""
+    if shop_id is not None:
+        txw_shop = "AND t.shop_id = ?"
+        barista_shop = "WHERE b.primary_shop_id = ?"
+        params.extend([shop_id, shop_id])
+
+    rows = conn.execute(
+        f"""
+        WITH txw AS (
+            SELECT t.id, t.barista_id, t.total
+            FROM transactions t
+            WHERE date(t.ts) BETWEEN ? AND ? {txw_shop}
+        ),
+        itx AS (
+            SELECT txw.id,
+                   SUM(ti.quantity) AS units,
+                   SUM(CASE WHEN mi.category = 'pastry' THEN ti.quantity ELSE 0 END) AS pastry
+            FROM txw
+            JOIN transaction_items ti ON ti.transaction_id = txw.id
+            JOIN menu_items mi ON mi.id = ti.menu_item_id
+            GROUP BY txw.id
+        )
+        SELECT b.id, b.name, b.primary_shop_id, s.name AS shop_name,
+               COUNT(txw.id) AS tx,
+               COALESCE(ROUND(AVG(txw.total), 2), 0) AS avg_ticket,
+               COALESCE(SUM(itx.units), 0) AS units,
+               COALESCE(SUM(itx.pastry), 0) AS pastry_units
+        FROM baristas b
+        JOIN shops s ON s.id = b.primary_shop_id
+        LEFT JOIN txw ON txw.barista_id = b.id
+        LEFT JOIN itx ON itx.id = txw.id
+        {barista_shop}
+        GROUP BY b.id
+        ORDER BY b.primary_shop_id, avg_ticket DESC
+        """,
+        params,
+    ).fetchall()
+
+    baristas = [
+        {
+            "barista_id": r["id"],
+            "name": r["name"],
+            "shop_id": r["primary_shop_id"],
+            "shop_name": r["shop_name"],
+            "tx": r["tx"],
+            "avg_ticket": r["avg_ticket"],
+            "items_per_tx": _safe_div(r["units"], r["tx"]),
+            "pastry_attach": _safe_div(r["pastry_units"], r["tx"]),
+            "shop_avg_ticket": None,
+            "shop_pastry_attach": None,
+            "avg_ticket_vs_shop_pct": None,
+        }
+        for r in rows
+    ]
+
+    by_shop: dict = {}
+    for b in baristas:
+        by_shop.setdefault(b["shop_id"], []).append(b)
+    for shop_baristas in by_shop.values():
+        active = [b for b in shop_baristas if b["tx"]]
+        if not active:
+            continue
+        bench_ticket = round(sum(b["avg_ticket"] for b in active) / len(active), 2)
+        bench_attach = round(sum((b["pastry_attach"] or 0) for b in active) / len(active), 2)
+        for b in shop_baristas:
+            b["shop_avg_ticket"] = bench_ticket
+            b["shop_pastry_attach"] = bench_attach
+            b["avg_ticket_vs_shop_pct"] = _delta(b["avg_ticket"], bench_ticket)
+
+    return {"period": win, "baristas": baristas}
 
 
 # Static dashboard -- mounted last so API routes take priority.
