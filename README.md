@@ -1,106 +1,89 @@
-# Coffee Chain Analytics — Take-home Assignment
+# Coffee Chain Analytics
 
-## Context
+A small coffee-chain dashboard (5 shops, 12 months of data) with two layers:
 
-You have a working analytics dashboard for a small coffee chain — **5 shops, 12 months of operational data**. Transactions, menu, reviews, staff shifts, shop metadata. The dashboard shows raw tables, numbers, lists. It is deliberately **"dumb"** — it does not summarize, forecast, recommend, or explain anything.
+- A deterministic analytics layer over the existing tables: revenue, margin and footfall per
+  shop, category contribution ranked by absolute margin, barista benchmarks, shop ratings.
+  Plain SQL, no model.
+- An AI layer that classifies the free text of negative reviews into themes, so a recurring
+  problem (for example a milk-quality cluster at one shop) becomes countable.
 
-Your job is to show us how you think about turning this into a product that uses AI **where it actually helps**.
+Part 1 reasoning is in [DISCOVERY.md](DISCOVERY.md). Evaluation strategy is in
+[EVALS.md](EVALS.md). The original brief is in [ASSIGNMENT.md](ASSIGNMENT.md).
 
----
+## How to run
 
-## Stack (what's already here)
-
-- **Backend:** Python + FastAPI, SQLite
-- **Frontend:** single HTML file + vanilla JS, no build step
-- **Data:** SQLite database, pre-seeded
-
-You can run it with:
+Docker:
 
 ```bash
 docker compose up
-# or
-pip install -r requirements.txt && python -m uvicorn main:app --reload
 ```
 
-The dashboard is available at `http://localhost:8000`.
+Dashboard at http://localhost:8000.
 
----
+Or locally:
 
-## What you need to deliver
+```bash
+pip install -r requirements.txt
+python -m uvicorn main:app --reload
+```
 
-The task has **two parts**. Part 1 is a document. Part 2 is code + a document. All writing is in **English**.
+### Populating review themes (the AI feature)
 
-### Part 1 — Discovery Document (`DISCOVERY.md`, ~2 pages)
+Classification runs offline and is cached. The dashboard reads the cache and never calls the
+model on a request. To classify the negative reviews:
 
-Answer these four questions:
+```bash
+OPENAI_API_KEY=sk-... python -m ai.classify
+```
 
-1. **What AI-driven opportunities do you see in this application?** List each one with: what it does, what signal / data it uses, what value it gives to the user.
-2. **How would you prioritize these opportunities?** Explain your criteria. Pick the top 3.
-3. **Architectural sketch of the top 3.** For each: where the AI layer sits, what is deterministic vs model-based, what data is required, where caching / guardrails belong.
-4. **What would you deliberately NOT build with AI here, and why?** Be specific about failure modes you want to avoid.
+Then open the "Review Themes" tab. Without a key you can fill the cache with a keyword fallback
+to try the surface:
 
-We are not looking for exhaustive idea dumps. We are looking for **the logic behind what you chose, what you didn't, and why**.
+```bash
+python -m ai.classify --fake
+AI_MODEL=fake-keyword python -m uvicorn main:app   # so the tab reads the fake labels
+```
 
-### Part 2 — Implementation of one idea (end-to-end)
+Configuration (environment): `AI_MODEL` (default `gpt-4o-mini`), `OPENAI_BASE_URL` (for
+OpenRouter or a local Ollama server), `AI_PROMPT_VERSION` (default `v1`).
 
-Pick **one** idea from Part 1 and implement it inside the existing app. Full path — from user-visible surface to the LLM call and back.
+## The AI feature
 
-Deliver:
+- **Where the model sits:** one step only, review text to a theme label. Selecting the negative
+  reviews and all counting, grouping and ranking is deterministic SQL on top of the analytics
+  layer, so the numbers on the dashboard stay reproducible.
+- **Prompt:** [prompts/review_classifier.v1.md](prompts/review_classifier.v1.md), versioned.
+  Output is strict JSON validated against a Pydantic schema (theme, confidence, evidence). JSON
+  mode is used instead of a provider-specific structured-output API so the same code runs on
+  OpenAI, OpenRouter and Ollama; the closed theme enum plus schema validation keeps the output
+  well-formed and is also the main defence against prompt injection through review text.
+- **Cache:** a sidecar SQLite file keyed by `(review_id, model, prompt_version)`. coffee.db is
+  never written. Bumping the prompt version or the model forces a clean reclassification.
 
-- **Working code.** New endpoint(s), UI change, whatever is needed. Single command to run.
-- **System prompt** — stored as a versioned file, structured, with your reasoning on format choice.
-- **Edge case list** — what inputs break the naive version, how your implementation handles them.
-- **Testing approach** — how you tested that the feature works and doesn't regress.
-- **`EVALS.md` (~1 page)** — how you would measure production quality of this feature if it shipped tomorrow: what dataset you would build, what metric, how you would catch regressions when the model or prompt changes.
-- **Choice of model / provider** — which you used and why. Include a one-sentence note on cost and latency trade-offs.
+### Edge cases handled
 
----
+- Empty or whitespace-only review text returns `unknown`, not a forced theme.
+- Invalid JSON or a theme outside the set: one retry, then a safe `unknown` fallback.
+- A review that speculates about sales or foot traffic: the prompt classifies the concrete
+  complaint and ignores the speculation. The classifier never explains a sales trend.
+- Prompt-injection text in a review is treated as content, constrained by the enum and schema.
+- Reviews not yet classified are reported as a count in the UI, not hidden.
 
-## Rules
+## Testing
 
-- **Any implementation language is allowed.** You can add a separate AI service in Node.js / Go / Python / whatever. Keep the existing Python app or replace parts of it — your call. Just keep it runnable with one command.
-- **Any LLM provider is allowed** (Anthropic, OpenAI, local model via Ollama, etc.). Bring your own API key.
-- **All documentation is in English.**
-- **Git history matters.** We will read your commits. We prefer meaningful small commits over one big "initial commit" dump.
-- **We are not evaluating frontend polish.** Make the feature accessible from the UI, but we do not care about visual design.
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
 
----
+- Analytics endpoints: anchors read from the seeded database plus invariants
+  (`tests/test_analytics.py`).
+- Classifier: schema validation, retry and fallback, cache hit/miss including prompt-version
+  invalidation, all offline with a fake classifier (`tests/test_classifier.py`).
+- Review-themes endpoint: Riverside's dairy cluster surfaces, Campus stays scattered (the
+  no-cluster guard), coverage is reported, the shop filter works (`tests/test_review_themes.py`).
 
-## Time expectation
-
-Up to **1 week** from the moment you start. Realistic focused work: **3-4 hours**. If you spend 30+ hours on this, something went wrong — stop and send what you have with a note explaining your reasoning.
-
----
-
-## What we evaluate
-
-Roughly, in this order:
-
-1. Range and quality of ideas in Part 1 — do you see where AI fits and where it doesn't?
-2. Quality of the prioritization logic — can you defend your choices?
-3. Production-grade implementation of one idea — not "playground style"
-4. Reasoning about evaluation and regression — can you tell if this AI feature is still working a month after ship?
-5. Awareness of failure modes — hallucination, context degradation, cost, latency
-
----
-
-## How to submit
-
-You have read access to this repository as an outside collaborator.
-
-1. On GitHub, click **"Use this template"** → **"Create a new repository"**. Give it any name. We recommend making it **private** (public is also fine — your call).
-2. Clone your new repository locally and work there. All changes — new files, modified files, the AI service, prompts, documentation — go into your repository.
-3. Commit as you go. We will read your commit history.
-4. Push your commits.
-5. If you made your repository **private**, add the recruiter as a collaborator (read access is enough).
-6. **Send the recruiter a link to your repository**, e.g. `https://github.com/your-username/your-repo-name`.
-
-Do **not** open a Pull Request against the original repository — we review each submission independently.
-
-Also:
-
-- Make sure the `README.md` at the top of your repository has a clear **"how to run"** section.
-- Put your `DISCOVERY.md` and `EVALS.md` at the root of the repository.
-- If you used any paid API, mention the provider and an estimate of cost-per-request in `EVALS.md`.
-
-Good luck.
+The end-to-end pipeline (reviews to cache to endpoint to UI) is verified offline with the fake
+classifier. The real `gpt-4o-mini` call in `LLMClassifier` shares the same parse, validate and
+fallback path and is run through `python -m ai.classify` with a key.
