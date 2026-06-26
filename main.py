@@ -4,8 +4,10 @@ No AI, no summaries, no forecasts. Raw data only.
 Candidates are expected to identify where AI adds value and implement it.
 """
 
+import os
 import subprocess
 import sys
+from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
@@ -15,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from ai.cache import ClassificationCache
 from db import DB_PATH, get_conn
 
 app = FastAPI(title="Coffee Chain Analytics", version="1.0")
@@ -356,6 +359,9 @@ def stats_barista(
 
 ANALYTICS_DEFAULT_DAYS = 90
 
+# Reviews at or below this rating are treated as negative and fed to the classifier.
+REVIEW_NEGATIVE_MAX = 3
+
 
 def _safe_div(num, den):
     return round(num / den, 2) if den else None
@@ -652,6 +658,100 @@ def analytics_baristas(
             b["avg_ticket_vs_shop_pct"] = _delta(b["avg_ticket"], bench_ticket)
 
     return {"period": win, "baristas": baristas}
+
+
+@app.get("/api/analytics/review-themes")
+def analytics_review_themes(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    shop_id: Optional[int] = None,
+    conn=Depends(get_conn),
+):
+    """Theme breakdown of negative reviews per shop, read from the classification cache.
+
+    The LLM is never called on this path. Classifications are produced offline by
+    `python -m ai.classify` and stored in a sidecar cache; this endpoint only counts and
+    ranks them, so the request stays deterministic, cheap, and fast. Reviews not yet
+    classified are reported as a count rather than hidden, so the surface is honest about
+    its coverage.
+    """
+    win = _resolve_window(conn, date_from, date_to)
+    if win is None:
+        return {"period": None, "chain_themes": [], "shops": [], "totals": None}
+
+    model = os.environ.get("AI_MODEL", "gpt-4o-mini")
+    prompt_version = os.environ.get("AI_PROMPT_VERSION", "v1")
+
+    sql = (
+        "SELECT r.id, r.shop_id, s.name AS shop_name "
+        "FROM reviews r JOIN shops s ON s.id = r.shop_id "
+        "WHERE r.rating <= ? AND date(r.ts) BETWEEN ? AND ?"
+    )
+    params: list = [REVIEW_NEGATIVE_MAX, win["from"], win["to"]]
+    if shop_id is not None:
+        sql += " AND r.shop_id = ?"
+        params.append(shop_id)
+    rows = conn.execute(sql, params).fetchall()
+
+    cache = ClassificationCache()
+    try:
+        shops: dict = {}
+        chain_counts: Counter = Counter()
+        classified_total = 0
+        for r in rows:
+            sid = r["shop_id"]
+            bucket = shops.setdefault(
+                sid,
+                {"shop_id": sid, "name": r["shop_name"], "counts": Counter(),
+                 "negative_reviews": 0, "classified": 0},
+            )
+            bucket["negative_reviews"] += 1
+            cls = cache.get(r["id"], model, prompt_version)
+            if cls is None:
+                continue
+            bucket["classified"] += 1
+            bucket["counts"][cls.theme.value] += 1
+            chain_counts[cls.theme.value] += 1
+            classified_total += 1
+    finally:
+        cache.close()
+
+    shop_out = []
+    for b in sorted(shops.values(), key=lambda x: x["negative_reviews"], reverse=True):
+        classified = b["classified"]
+        themes = [
+            {"theme": t, "count": n, "share_pct": _pct(n, classified)}
+            for t, n in b["counts"].most_common()
+        ]
+        shop_out.append(
+            {
+                "shop_id": b["shop_id"],
+                "name": b["name"],
+                "negative_reviews": b["negative_reviews"],
+                "classified": classified,
+                "unclassified": b["negative_reviews"] - classified,
+                "top_theme": themes[0]["theme"] if themes else None,
+                "themes": themes,
+            }
+        )
+
+    negative_total = sum(b["negative_reviews"] for b in shops.values())
+    return {
+        "period": win,
+        "model": model,
+        "prompt_version": prompt_version,
+        "negative_threshold": REVIEW_NEGATIVE_MAX,
+        "totals": {
+            "negative_reviews": negative_total,
+            "classified": classified_total,
+            "unclassified": negative_total - classified_total,
+        },
+        "chain_themes": [
+            {"theme": t, "count": n, "share_pct": _pct(n, classified_total)}
+            for t, n in chain_counts.most_common()
+        ],
+        "shops": shop_out,
+    }
 
 
 # Static dashboard -- mounted last so API routes take priority.
