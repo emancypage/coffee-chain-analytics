@@ -25,13 +25,14 @@ def _default_cache_path() -> Path:
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS classifications (
-    review_id     INTEGER PRIMARY KEY,
+    review_id     INTEGER NOT NULL,
     theme         TEXT    NOT NULL,
     confidence    REAL    NOT NULL,
     evidence      TEXT    NOT NULL,
     model         TEXT    NOT NULL,
     prompt_version TEXT   NOT NULL,
-    created_at    TEXT    NOT NULL
+    created_at    TEXT    NOT NULL,
+    PRIMARY KEY (review_id, model, prompt_version)
 )
 """
 
@@ -75,12 +76,10 @@ class ClassificationCache:
             INSERT INTO classifications
                 (review_id, theme, confidence, evidence, model, prompt_version, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(review_id) DO UPDATE SET
+            ON CONFLICT(review_id, model, prompt_version) DO UPDATE SET
                 theme = excluded.theme,
                 confidence = excluded.confidence,
                 evidence = excluded.evidence,
-                model = excluded.model,
-                prompt_version = excluded.prompt_version,
                 created_at = excluded.created_at
             """,
             (
