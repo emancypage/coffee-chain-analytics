@@ -5,6 +5,7 @@ A cache hit requires matching both model and prompt_version so that
 bumping either forces reclassification.
 """
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +15,13 @@ from ai.classifier import Classifier
 from ai.schema import ReviewClassification
 from ai.themes import ReviewTheme
 
-_DEFAULT_CACHE_PATH = Path(__file__).parent.parent / "data" / "classification_cache.db"
+
+def _default_cache_path() -> Path:
+    """Cache location, overridable via CLASSIFICATION_CACHE_DB (used by tests)."""
+    override = os.environ.get("CLASSIFICATION_CACHE_DB")
+    if override:
+        return Path(override)
+    return Path(__file__).parent.parent / "data" / "classification_cache.db"
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS classifications (
@@ -38,8 +45,8 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 class ClassificationCache:
-    def __init__(self, path: Path = _DEFAULT_CACHE_PATH) -> None:
-        self._conn = _connect(path)
+    def __init__(self, path: Path | None = None) -> None:
+        self._conn = _connect(path or _default_cache_path())
 
     def get(self, review_id: int, model: str, prompt_version: str) -> ReviewClassification | None:
         row = self._conn.execute(
