@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from ai.schema import ReviewClassification
 from ai.themes import ReviewTheme
 
@@ -90,12 +92,16 @@ class LLMClassifier:
         return ReviewClassification.model_validate(data)
 
     def classify(self, text: str) -> ReviewClassification:
+        # Empty reviews carry no signal; skip the API call entirely.
+        if not text or not text.strip():
+            return ReviewClassification(theme=ReviewTheme.unknown, confidence=0.0, evidence="")
+        # Retry only on malformed model output. Auth, rate-limit, and network errors propagate
+        # so a misconfigured run fails loudly instead of labelling everything unknown.
         try:
             return self._call_once(text)
-        except Exception:
+        except (json.JSONDecodeError, ValidationError):
             pass
-        # Single retry on JSON parse or validation failure.
         try:
             return self._call_once(text)
-        except Exception:
+        except (json.JSONDecodeError, ValidationError):
             return ReviewClassification(theme=ReviewTheme.unknown, confidence=0.0, evidence="")
