@@ -180,6 +180,7 @@
   <button data-tab="menu">Menu &amp; Items</button>
   <button data-tab="transactions">Transactions</button>
   <button data-tab="reviews">Reviews</button>
+  <button data-tab="themes">Review Themes</button>
   <button data-tab="staff">Staff</button>
 </nav>
 
@@ -382,6 +383,54 @@
     </div>
   </section>
 
+  <!-- REVIEW THEMES (AI feature) -->
+  <section id="tab-themes" class="tab">
+    <p class="muted" style="max-width:640px">
+      Negative reviews (rating &le; 3) grouped by theme. Each review's free text is classified
+      by an LLM into one theme from a closed set, offline and cached; this view only counts and
+      ranks the cached labels. A recurring problem (for example a milk-quality cluster at one
+      shop) shows up as a dominant theme that the raw review list cannot reveal.
+    </p>
+    <div class="filters">
+      <label>Shop
+        <select id="th-shop">
+          <option value="">All shops</option>
+        </select>
+      </label>
+      <label>From <input type="date" id="th-from"></label>
+      <label>To <input type="date" id="th-to"></label>
+      <button onclick="loadThemes()">Apply</button>
+      <button class="secondary" onclick="resetFilters('themes')">Reset</button>
+      <span class="count" id="th-coverage" style="align-self:center"></span>
+    </div>
+
+    <div class="section-title">By shop (ranked by negative review count)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Shop</th>
+          <th class="num">Negative reviews</th>
+          <th class="num">Classified</th>
+          <th>Top theme</th>
+          <th>Theme breakdown</th>
+        </tr>
+      </thead>
+      <tbody id="th-shops"></tbody>
+    </table>
+
+    <div class="section-title">Chain themes (ranked by count)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Theme</th>
+          <th class="num">Count</th>
+          <th class="num">Share</th>
+        </tr>
+      </thead>
+      <tbody id="th-chain"></tbody>
+    </table>
+  </section>
+
   <!-- STAFF -->
   <section id="tab-staff" class="tab">
     <div class="filters">
@@ -466,6 +515,7 @@ document.querySelectorAll('nav button').forEach(btn => {
     else if (tab === 'menu') loadMenu();
     else if (tab === 'transactions') loadTransactions(0);
     else if (tab === 'reviews') loadReviews(0);
+    else if (tab === 'themes') loadThemes();
     else if (tab === 'staff') loadStaff();
   });
 });
@@ -497,6 +547,7 @@ function resetFilters(prefix) {
   if (prefix === 'tx') loadTransactions(0);
   if (prefix === 'rv') loadReviews(0);
   if (prefix === 'staff') loadStaff();
+  if (prefix === 'themes') loadThemes();
 }
 
 // ---- sortable tables (click a header to sort; click again to reverse) ----
@@ -807,6 +858,62 @@ async function loadStaff() {
   } catch (e) {
     body.innerHTML = `<tr><td colspan="8" class="error">${esc(e.message)}</td></tr>`;
   }
+}
+
+// ---- REVIEW THEMES tab (AI feature) ----
+async function loadThemes() {
+  const body = document.getElementById('th-shops');
+  body.innerHTML = '<tr><td colspan="5" class="loading">Loading...</td></tr>';
+  try {
+    const res = await api('/api/analytics/review-themes', {
+      shop_id: document.getElementById('th-shop').value,
+      date_from: document.getElementById('th-from').value,
+      date_to: document.getElementById('th-to').value,
+    });
+    if (res.period) {
+      if (!document.getElementById('th-from').value) document.getElementById('th-from').value = res.period.from;
+      if (!document.getElementById('th-to').value) document.getElementById('th-to').value = res.period.to;
+    }
+    renderThemes(res);
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="error">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function themeBreakdown(themes) {
+  if (!themes || !themes.length) return '<span class="muted">—</span>';
+  return themes.map(t => `${esc(t.theme)} <span class="muted">${t.count}</span>`).join(', ');
+}
+
+function renderThemes(res) {
+  const tot = res.totals;
+  const cov = document.getElementById('th-coverage');
+  if (!tot || tot.negative_reviews === 0) {
+    cov.textContent = 'No negative reviews in this period';
+  } else if (tot.classified === 0) {
+    cov.innerHTML = `0 / ${tot.negative_reviews} classified — run <code>python -m ai.classify</code> to populate (model ${esc(res.model)})`;
+  } else {
+    cov.textContent = `${tot.classified} / ${tot.negative_reviews} negative reviews classified · model ${res.model}, prompt ${res.prompt_version}`
+      + (tot.unclassified ? ` · ${tot.unclassified} pending` : '');
+  }
+
+  document.getElementById('th-shops').innerHTML = (res.shops || []).map(s => `
+    <tr>
+      <td>${esc(s.name)}</td>
+      <td class="num" data-sort="${s.negative_reviews}">${s.negative_reviews}</td>
+      <td class="num" data-sort="${s.classified}">${s.classified}</td>
+      <td data-sort="${esc(s.top_theme || '')}">${s.top_theme ? esc(s.top_theme) : '<span class="muted">—</span>'}</td>
+      <td>${themeBreakdown(s.themes)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="5" class="muted">No data</td></tr>';
+
+  document.getElementById('th-chain').innerHTML = (res.chain_themes || []).map(t => `
+    <tr>
+      <td>${esc(t.theme)}</td>
+      <td class="num" data-sort="${t.count}">${t.count}</td>
+      <td class="num" data-sort="${t.share_pct ?? -1}">${pctStr(t.share_pct)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="3" class="muted">No data</td></tr>';
 }
 
 function shopName(id) {
