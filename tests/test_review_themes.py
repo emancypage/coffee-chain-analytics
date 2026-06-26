@@ -63,6 +63,18 @@ def test_riverside_milk_cluster_surfaces_as_a_concentration(populated_cache):
     assert riverside["themes"][0]["share_pct"] >= 40
 
 
+def test_default_window_surfaces_the_dairy_cluster(populated_cache):
+    # C1 guard: the default load passes no dates. The review-themes view must default to the
+    # full review history, not the trailing-90-day window used by the financial endpoints, or
+    # the Riverside dairy cluster (Q4 2025) is invisible on first open of the tab.
+    d = get_json("/api/analytics/review-themes")
+    assert d["period"]["from"] == d["period"]["data_min"]
+    assert d["period"]["to"] == d["period"]["data_max"]
+    riverside = next(s for s in d["shops"] if s["name"] == "Riverside Coffee")
+    assert riverside["top_theme"] == "dairy"
+    assert riverside["themes"][0]["share_pct"] >= 40
+
+
 def test_campus_has_no_dominant_complaint_cluster(populated_cache):
     # The Campus decline has no qualitative signal: its negative reviews are scattered. The
     # classifier labels what was written and must not be pushed into a cause for the sales drop.

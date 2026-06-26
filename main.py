@@ -376,10 +376,14 @@ def _delta(cur, prev):
     return round((cur - prev) / prev * 100, 1) if prev else None
 
 
-def _resolve_window(conn, date_from, date_to):
+def _resolve_window(conn, date_from, date_to, default_full=False):
     """Resolve the current and previous comparison windows as ISO date strings.
 
-    With no range, the current window is the trailing ANALYTICS_DEFAULT_DAYS of data.
+    With no range, the current window is the trailing ANALYTICS_DEFAULT_DAYS of data,
+    unless default_full is set, in which case it spans all available data. The full
+    default suits the review-themes view: a recurring complaint cluster can sit anywhere
+    in history, so a trailing window would hide it (the Riverside dairy cluster is in
+    Q4 2025, outside the last 90 days of data).
     The previous window is always the equal-length span immediately before the current one,
     so the same comparison logic works whether or not the caller passes explicit dates.
     """
@@ -390,8 +394,12 @@ def _resolve_window(conn, date_from, date_to):
     if lo is None:
         return None
     if date_from is None and date_to is None:
-        cur_to = date.fromisoformat(hi)
-        cur_from = cur_to - timedelta(days=ANALYTICS_DEFAULT_DAYS - 1)
+        if default_full:
+            cur_from = date.fromisoformat(lo)
+            cur_to = date.fromisoformat(hi)
+        else:
+            cur_to = date.fromisoformat(hi)
+            cur_from = cur_to - timedelta(days=ANALYTICS_DEFAULT_DAYS - 1)
     else:
         cur_from = date.fromisoformat(date_from) if date_from else date.fromisoformat(lo)
         cur_to = date.fromisoformat(date_to) if date_to else date.fromisoformat(hi)
@@ -675,7 +683,9 @@ def analytics_review_themes(
     classified are reported as a count rather than hidden, so the surface is honest about
     its coverage.
     """
-    win = _resolve_window(conn, date_from, date_to)
+    # Default to the full review history: the marquee signal (the Riverside dairy
+    # cluster) sits in Q4 2025, which a trailing-90-day default window would hide.
+    win = _resolve_window(conn, date_from, date_to, default_full=True)
     if win is None:
         return {"period": None, "chain_themes": [], "shops": [], "totals": None}
 
