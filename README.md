@@ -48,7 +48,8 @@ AI_MODEL=fake-keyword python -m uvicorn main:app   # so the tab reads the fake l
 ```
 
 Configuration (environment): `AI_MODEL` (default `gpt-4o-mini`), `OPENAI_BASE_URL` (for
-OpenRouter or a local Ollama server), `AI_PROMPT_VERSION` (default `v1`).
+OpenRouter or a local Ollama server), `AI_PROMPT_VERSION` (default `v1`). The full list with
+defaults is in [.env.example](.env.example); copy it to `.env` to set them in one place.
 
 ## The AI feature
 
