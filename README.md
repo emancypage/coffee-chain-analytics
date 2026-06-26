@@ -35,6 +35,8 @@ model on a request. To classify the negative reviews:
 
 ```bash
 OPENAI_API_KEY=sk-... python -m ai.classify
+# inside Docker:
+# docker compose exec -e OPENAI_API_KEY=sk-... app python -m ai.classify
 ```
 
 Then open the "Review Themes" tab. Without a key you can fill the cache with a keyword fallback
@@ -73,17 +75,20 @@ OpenRouter or a local Ollama server), `AI_PROMPT_VERSION` (default `v1`).
 ## Testing
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest
 ```
 
 - Analytics endpoints: anchors read from the seeded database plus invariants
   (`tests/test_analytics.py`).
-- Classifier: schema validation, retry and fallback, cache hit/miss including prompt-version
-  invalidation, all offline with a fake classifier (`tests/test_classifier.py`).
+- Classifier: schema validation, the keyword fake classifier, and cache hit/miss including
+  prompt-version invalidation, offline (`tests/test_classifier.py`).
+- LLM classifier path: JSON parse, single retry, unknown fallback, and the empty-text
+  short-circuit, with a stubbed client and no network (`tests/test_llm_classifier.py`).
 - Review-themes endpoint: Riverside's dairy cluster surfaces, Campus stays scattered (the
   no-cluster guard), coverage is reported, the shop filter works (`tests/test_review_themes.py`).
 
 The end-to-end pipeline (reviews to cache to endpoint to UI) is verified offline with the fake
-classifier. The real `gpt-4o-mini` call in `LLMClassifier` shares the same parse, validate and
-fallback path and is run through `python -m ai.classify` with a key.
+classifier, and LLMClassifier's parse, retry and fallback logic is covered by the stubbed-client
+tests. The only part that needs a key and a network is the actual provider call, run through
+`python -m ai.classify`.

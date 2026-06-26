@@ -11,7 +11,7 @@ deterministic SQL and does not need model evaluation. The only thing to measure 
 
 ## Dataset
 
-A hand-labelled gold set, versioned in the repo as `evals/gold.jsonl` (`review_id`, `theme`).
+A hand-labelled gold set that would live in the repo at `evals/gold.jsonl` (`review_id`, `theme`).
 Build it by stratified sampling across shops and ratings so every theme and every shop is
 represented, then label by hand. Two passes with adjudication on disagreements; record the
 ambiguous ones, they are the cases that move scores. Deliberately include the hard inputs:
