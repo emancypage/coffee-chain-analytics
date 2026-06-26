@@ -99,6 +99,9 @@
     text-transform: uppercase;
     letter-spacing: 0.3px;
   }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: #222; }
+  .sort-ind { color: #8a5a2b; font-size: 10px; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: #fafafa; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -142,6 +145,23 @@
 
   .count { color: #666; font-size: 12px; margin-bottom: 8px; }
   .muted { color: #999; }
+
+  .kpis { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .kpi {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    padding: 12px 16px;
+    min-width: 150px;
+    flex: 1;
+  }
+  .kpi .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.3px; }
+  .kpi .value { font-size: 22px; font-weight: 600; color: #2b2118; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kpi .delta { font-size: 12px; margin-top: 2px; }
+  .section-title { font-size: 13px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.3px; margin: 18px 0 8px; }
+  .up { color: #2a8a2a; }
+  .down { color: #b33; }
+  .barlite { display: inline-block; height: 8px; background: #c8a06a; border-radius: 2px; vertical-align: middle; }
   .loading { color: #888; padding: 20px; text-align: center; }
   .error { color: #b33; padding: 12px; background: #fee; border: 1px solid #fbb; border-radius: 3px; }
 </style>
@@ -154,7 +174,8 @@
 </header>
 
 <nav>
-  <button data-tab="shops" class="active">Shops</button>
+  <button data-tab="overview" class="active">Overview</button>
+  <button data-tab="shops">Shops</button>
   <button data-tab="sales">Daily Sales</button>
   <button data-tab="menu">Menu &amp; Items</button>
   <button data-tab="transactions">Transactions</button>
@@ -164,8 +185,56 @@
 
 <main>
 
+  <!-- OVERVIEW -->
+  <section id="tab-overview" class="tab active">
+    <div class="filters">
+      <label>From <input type="date" id="ov-from"></label>
+      <label>To <input type="date" id="ov-to"></label>
+      <button onclick="loadOverview()">Apply</button>
+      <button class="secondary" onclick="resetOverview()">Reset</button>
+      <span class="count" id="ov-period" style="align-self:center"></span>
+    </div>
+
+    <div class="kpis" id="ov-kpis"></div>
+
+    <div class="section-title">Per-shop scorecard (vs previous equal period)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Shop</th>
+          <th class="num">Revenue</th>
+          <th class="num">&Delta; Rev</th>
+          <th class="num">Gross margin</th>
+          <th class="num">Margin %</th>
+          <th class="num">Avg ticket</th>
+          <th class="num">Items/tx</th>
+          <th class="num">Rev share</th>
+          <th class="num">Avg rating</th>
+        </tr>
+      </thead>
+      <tbody id="ov-shops"></tbody>
+    </table>
+
+    <div class="section-title">Category contribution (ranked by absolute margin $)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th class="num">Units</th>
+          <th class="num">Revenue</th>
+          <th class="num">Rev share</th>
+          <th class="num">Gross margin</th>
+          <th class="num">Margin %</th>
+          <th class="num">Margin share</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="ov-cats"></tbody>
+    </table>
+  </section>
+
   <!-- SHOPS -->
-  <section id="tab-shops" class="tab active">
+  <section id="tab-shops" class="tab">
     <div class="count" id="shops-count"></div>
     <table>
       <thead>
@@ -335,7 +404,9 @@
           <th>Primary shop</th>
           <th class="num">Transactions</th>
           <th class="num">Avg ticket</th>
-          <th class="num">Revenue</th>
+          <th class="num">vs shop</th>
+          <th class="num">Items/tx</th>
+          <th class="num">Pastry/tx</th>
         </tr>
       </thead>
       <tbody id="staff-body"></tbody>
@@ -389,7 +460,9 @@ document.querySelectorAll('nav button').forEach(btn => {
     const tab = btn.dataset.tab;
     document.getElementById('tab-' + tab).classList.add('active');
     // lazy load
-    if (tab === 'sales') loadSales();
+    if (tab === 'overview') loadOverview();
+    else if (tab === 'shops') loadShops();
+    else if (tab === 'sales') loadSales();
     else if (tab === 'menu') loadMenu();
     else if (tab === 'transactions') loadTransactions(0);
     else if (tab === 'reviews') loadReviews(0);
@@ -424,6 +497,144 @@ function resetFilters(prefix) {
   if (prefix === 'tx') loadTransactions(0);
   if (prefix === 'rv') loadReviews(0);
   if (prefix === 'staff') loadStaff();
+}
+
+// ---- sortable tables (click a header to sort; click again to reverse) ----
+function cellSortValue(td) {
+  if (!td) return -Infinity;
+  if (td.dataset && td.dataset.sort !== undefined) {
+    const n = parseFloat(td.dataset.sort);
+    return isNaN(n) ? td.dataset.sort.toLowerCase() : n;
+  }
+  const t = td.textContent.trim();
+  if (t === '' || t === '—') return -Infinity;
+  const sign = t.includes('▼') ? -1 : 1;
+  const num = parseFloat(t.replace(/[^0-9.\-]/g, ''));
+  return isNaN(num) ? t.toLowerCase() : sign * num;
+}
+
+function makeSortable(table) {
+  const ths = Array.from(table.querySelectorAll('thead th'));
+  ths.forEach((th, idx) => {
+    if (th.classList.contains('nosort') || th.textContent.trim() === '') return;
+    th.classList.add('sortable');
+    const ind = document.createElement('span');
+    ind.className = 'sort-ind';
+    th.appendChild(ind);
+    th.addEventListener('click', () => {
+      const tbody = table.querySelector('tbody');
+      if (!tbody) return;
+      const rows = Array.from(tbody.querySelectorAll('tr'))
+        .filter(r => r.children.length > idx && (r.children[0].colSpan || 1) <= 1);
+      if (rows.length < 2) return;
+      const asc = th.dataset.dir !== 'asc';
+      ths.forEach(o => { o.dataset.dir = ''; const i = o.querySelector('.sort-ind'); if (i) i.textContent = ''; });
+      th.dataset.dir = asc ? 'asc' : 'desc';
+      ind.textContent = asc ? ' ▲' : ' ▼';
+      rows.sort((ra, rb) => {
+        const va = cellSortValue(ra.children[idx]);
+        const vb = cellSortValue(rb.children[idx]);
+        if (va < vb) return asc ? -1 : 1;
+        if (va > vb) return asc ? 1 : -1;
+        return 0;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    });
+  });
+}
+
+// ---- OVERVIEW tab ----
+function pctStr(v) { return (v === null || v === undefined) ? '—' : v.toFixed(1) + '%'; }
+function deltaStr(v) {
+  if (v === null || v === undefined) return '<span class="muted">—</span>';
+  const cls = v < 0 ? 'down' : 'up';
+  const arrow = v < 0 ? '▼' : '▲';
+  return `<span class="${cls}">${arrow} ${Math.abs(v).toFixed(1)}%</span>`;
+}
+
+async function loadOverview() {
+  const params = {
+    date_from: document.getElementById('ov-from').value,
+    date_to: document.getElementById('ov-to').value,
+  };
+  const kpis = document.getElementById('ov-kpis');
+  kpis.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const [ov, cat] = await Promise.all([
+      api('/api/analytics/overview', params),
+      api('/api/analytics/categories', params),
+    ]);
+    if (ov.period) {
+      if (!params.date_from) document.getElementById('ov-from').value = ov.period.from;
+      if (!params.date_to) document.getElementById('ov-to').value = ov.period.to;
+      document.getElementById('ov-period').textContent =
+        `${ov.period.from} → ${ov.period.to} (${ov.period.days}d), compared to ${ov.period.prev_from} → ${ov.period.prev_to}`;
+    }
+    renderKpis(ov.chain);
+    renderShopScorecard(ov.shops);
+    renderCategories(cat.categories);
+  } catch (e) {
+    kpis.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+  }
+}
+
+function resetOverview() {
+  document.getElementById('ov-from').value = '';
+  document.getElementById('ov-to').value = '';
+  loadOverview();
+}
+
+function renderKpis(c) {
+  const box = document.getElementById('ov-kpis');
+  if (!c) { box.innerHTML = '<div class="muted">No data</div>'; return; }
+  const cards = [
+    ['Revenue', money(c.revenue), c.revenue_delta_pct],
+    ['Gross margin', `${money(c.gross_margin)} <span class="muted">(${pctStr(c.gross_margin_pct)})</span>`, c.margin_delta_pct],
+    ['Transactions', (c.tx ?? 0).toLocaleString(), null],
+    ['Avg ticket', money(c.avg_ticket), null],
+    ['Items / tx', (c.items_per_tx ?? '—'), null],
+    ['Avg rating', c.avg_rating != null ? `${c.avg_rating} <span class="muted">(${c.review_count})</span>` : '—', null],
+  ];
+  box.innerHTML = cards.map(([label, val, delta]) => `
+    <div class="kpi">
+      <div class="label">${label}</div>
+      <div class="value">${val}</div>
+      <div class="delta">${delta === null ? '' : deltaStr(delta) + ' <span class="muted">vs prev</span>'}</div>
+    </div>
+  `).join('');
+}
+
+function renderShopScorecard(shops) {
+  document.getElementById('ov-shops').innerHTML = (shops || []).map(s => `
+    <tr>
+      <td>${esc(s.name)}</td>
+      <td class="num" data-sort="${s.revenue ?? 0}">${money(s.revenue)}</td>
+      <td class="num" data-sort="${s.revenue_delta_pct ?? -999999}">${deltaStr(s.revenue_delta_pct)}</td>
+      <td class="num" data-sort="${s.gross_margin ?? 0}">${money(s.gross_margin)}</td>
+      <td class="num" data-sort="${s.gross_margin_pct ?? -1}">${pctStr(s.gross_margin_pct)}</td>
+      <td class="num" data-sort="${s.avg_ticket ?? 0}">${money(s.avg_ticket)}</td>
+      <td class="num" data-sort="${s.items_per_tx ?? -1}">${s.items_per_tx ?? '—'}</td>
+      <td class="num" data-sort="${s.revenue_share_pct ?? -1}">${pctStr(s.revenue_share_pct)}</td>
+      <td class="num" data-sort="${s.avg_rating ?? -1}">${s.avg_rating != null ? `${s.avg_rating.toFixed(2)} <span class="muted">(${s.review_count})</span>` : '—'}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="9" class="muted">No data</td></tr>';
+}
+
+function renderCategories(cats) {
+  cats = cats || [];
+  const maxMargin = Math.max(1, ...cats.map(c => c.margin || 0));
+  document.getElementById('ov-cats').innerHTML = cats.map(c => `
+    <tr>
+      <td>${esc(c.category)}</td>
+      <td class="num" data-sort="${c.units ?? 0}">${(c.units ?? 0).toLocaleString()}</td>
+      <td class="num" data-sort="${c.revenue ?? 0}">${money(c.revenue)}</td>
+      <td class="num" data-sort="${c.revenue_share_pct ?? -1}">${pctStr(c.revenue_share_pct)}</td>
+      <td class="num" data-sort="${c.margin ?? 0}">${money(c.margin)}</td>
+      <td class="num" data-sort="${c.margin_pct ?? -1}">${pctStr(c.margin_pct)}</td>
+      <td class="num" data-sort="${c.margin_share_pct ?? -1}">${pctStr(c.margin_share_pct)}</td>
+      <td class="nosort"><span class="barlite" style="width:${Math.round((c.margin || 0) / maxMargin * 120)}px"></span></td>
+    </tr>
+  `).join('') || '<tr><td colspan="8" class="muted">No data</td></tr>';
 }
 
 // ---- SHOPS tab ----
@@ -572,26 +783,29 @@ function pagerRv(dir) {
 // ---- STAFF tab ----
 async function loadStaff() {
   const body = document.getElementById('staff-body');
-  body.innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="8" class="loading">Loading...</td></tr>';
   try {
-    const rows = await api('/api/stats/barista', {
+    const res = await api('/api/analytics/baristas', {
       shop_id: document.getElementById('staff-shop').value,
       date_from: document.getElementById('staff-from').value,
       date_to: document.getElementById('staff-to').value,
     });
-    document.getElementById('staff-count').textContent = `${rows.length} baristas`;
+    const rows = res.baristas || [];
+    document.getElementById('staff-count').textContent = `${rows.length} baristas · "vs shop" benchmarks avg ticket within the barista's own shop`;
     body.innerHTML = rows.map(r => `
       <tr>
-        <td>${r.id}</td>
+        <td>${r.barista_id}</td>
         <td>${esc(r.name)}</td>
         <td>${esc(r.shop_name)}</td>
-        <td class="num">${r.tx_count ?? 0}</td>
+        <td class="num">${(r.tx ?? 0).toLocaleString()}</td>
         <td class="num">${money(r.avg_ticket)}</td>
-        <td class="num">${money(r.revenue)}</td>
+        <td class="num">${deltaStr(r.avg_ticket_vs_shop_pct)}</td>
+        <td class="num">${r.items_per_tx ?? '—'}</td>
+        <td class="num">${r.pastry_attach ?? '—'}</td>
       </tr>
-    `).join('');
+    `).join('') || '<tr><td colspan="8" class="muted">No baristas</td></tr>';
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="6" class="error">${esc(e.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8" class="error">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -603,7 +817,8 @@ function shopName(id) {
 // ---- boot ----
 (async () => {
   await initSelects();
-  loadShops();
+  document.querySelectorAll('main table').forEach(makeSortable);
+  loadOverview();
 })();
 </script>
 
