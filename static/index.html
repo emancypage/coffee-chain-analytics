@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Coffee Chain Analytics</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    color: #222;
+    background: #f6f6f6;
+  }
+  header {
+    background: #2b2118;
+    color: #f3eee8;
+    padding: 14px 24px;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.3px; }
+  header .sub { font-size: 12px; opacity: 0.7; margin-top: 2px; }
+
+  nav {
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    padding: 0 24px;
+    display: flex;
+    gap: 0;
+  }
+  nav button {
+    background: none;
+    border: none;
+    padding: 12px 18px;
+    font-size: 14px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: #555;
+  }
+  nav button:hover { color: #222; }
+  nav button.active {
+    color: #222;
+    border-bottom-color: #8a5a2b;
+    font-weight: 600;
+  }
+
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+
+  .filters {
+    background: #fff;
+    padding: 14px;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  .filters label { display: flex; flex-direction: column; font-size: 12px; color: #666; gap: 3px; }
+  .filters input, .filters select {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 13px;
+    min-width: 140px;
+  }
+  .filters button {
+    padding: 7px 14px;
+    background: #8a5a2b;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .filters button:hover { background: #6f4620; }
+  .filters button.secondary { background: #888; }
+  .filters button.secondary:hover { background: #666; }
+
+  table {
+    background: #fff;
+    border-collapse: collapse;
+    width: 100%;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+  }
+  th {
+    background: #faf7f2;
+    font-size: 12px;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafafa; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+
+  .rating-1, .rating-2 { color: #b33; font-weight: 600; }
+  .rating-3 { color: #aa7a00; font-weight: 600; }
+  .rating-4, .rating-5 { color: #2a8a2a; font-weight: 600; }
+
+  .review {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+  }
+  .review .meta {
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 4px;
+    display: flex;
+    gap: 10px;
+  }
+  .review .text { font-size: 14px; }
+
+  .pager {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 12px;
+    font-size: 13px;
+  }
+  .pager button {
+    padding: 5px 12px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .count { color: #666; font-size: 12px; margin-bottom: 8px; }
+  .muted { color: #999; }
+  .loading { color: #888; padding: 20px; text-align: center; }
+  .error { color: #b33; padding: 12px; background: #fee; border: 1px solid #fbb; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Coffee Chain Analytics</h1>
+  <div class="sub">Internal dashboard &middot; 5 shops &middot; 12 months of operational data</div>
+</header>
+
+<nav>
+  <button data-tab="shops" class="active">Shops</button>
+  <button data-tab="sales">Daily Sales</button>
+  <button data-tab="menu">Menu &amp; Items</button>
+  <button data-tab="transactions">Transactions</button>
+  <button data-tab="reviews">Reviews</button>
+  <button data-tab="staff">Staff</button>
+</nav>
+
+<main>
+
+  <!-- SHOPS -->
+  <section id="tab-shops" class="tab active">
+    <div class="count" id="shops-count"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Location</th>
+          <th class="num">Seats</th>
+          <th>Opened</th>
+        </tr>
+      </thead>
+      <tbody id="shops-body"></tbody>
+    </table>
+  </section>
+
+  <!-- DAILY SALES -->
+  <section id="tab-sales" class="tab">
+    <div class="filters">
+      <label>Shop
+        <select id="sales-shop">
+          <option value="">All shops</option>
+        </select>
+      </label>
+      <label>From <input type="date" id="sales-from"></label>
+      <label>To <input type="date" id="sales-to"></label>
+      <button onclick="loadSales()">Apply</button>
+      <button class="secondary" onclick="resetFilters('sales')">Reset</button>
+    </div>
+    <div class="count" id="sales-count"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Shop</th>
+          <th class="num">Transactions</th>
+          <th class="num">Revenue</th>
+          <th class="num">Avg ticket</th>
+        </tr>
+      </thead>
+      <tbody id="sales-body"></tbody>
+    </table>
+  </section>
+
+  <!-- MENU -->
+  <section id="tab-menu" class="tab">
+    <div class="filters">
+      <label>Shop
+        <select id="menu-shop">
+          <option value="">All shops</option>
+        </select>
+      </label>
+      <label>From <input type="date" id="menu-from"></label>
+      <label>To <input type="date" id="menu-to"></label>
+      <button onclick="loadMenu()">Apply</button>
+      <button class="secondary" onclick="resetFilters('menu')">Reset</button>
+    </div>
+    <div class="count" id="menu-count"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Category</th>
+          <th class="num">Price</th>
+          <th class="num">Cost</th>
+          <th class="num">Units sold</th>
+          <th class="num">Revenue</th>
+          <th class="num">Margin total</th>
+        </tr>
+      </thead>
+      <tbody id="menu-body"></tbody>
+    </table>
+  </section>
+
+  <!-- TRANSACTIONS -->
+  <section id="tab-transactions" class="tab">
+    <div class="filters">
+      <label>Shop
+        <select id="tx-shop">
+          <option value="">All shops</option>
+        </select>
+      </label>
+      <label>Barista
+        <select id="tx-barista">
+          <option value="">Any</option>
+        </select>
+      </label>
+      <label>From <input type="date" id="tx-from"></label>
+      <label>To <input type="date" id="tx-to"></label>
+      <button onclick="loadTransactions(0)">Apply</button>
+      <button class="secondary" onclick="resetFilters('tx')">Reset</button>
+    </div>
+    <div class="count" id="tx-count"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Time</th>
+          <th>Shop</th>
+          <th>Barista</th>
+          <th>Items</th>
+          <th class="num">Total</th>
+        </tr>
+      </thead>
+      <tbody id="tx-body"></tbody>
+    </table>
+    <div class="pager">
+      <button id="tx-prev" onclick="pagerTx(-1)">Previous</button>
+      <span id="tx-page-info"></span>
+      <button id="tx-next" onclick="pagerTx(1)">Next</button>
+    </div>
+  </section>
+
+  <!-- REVIEWS -->
+  <section id="tab-reviews" class="tab">
+    <div class="filters">
+      <label>Shop
+        <select id="rv-shop">
+          <option value="">All shops</option>
+        </select>
+      </label>
+      <label>Min rating
+        <select id="rv-min">
+          <option value="">-</option>
+          <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+        </select>
+      </label>
+      <label>Max rating
+        <select id="rv-max">
+          <option value="">-</option>
+          <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+        </select>
+      </label>
+      <label>From <input type="date" id="rv-from"></label>
+      <label>To <input type="date" id="rv-to"></label>
+      <button onclick="loadReviews(0)">Apply</button>
+      <button class="secondary" onclick="resetFilters('rv')">Reset</button>
+    </div>
+    <div class="count" id="rv-count"></div>
+    <div id="rv-body"></div>
+    <div class="pager">
+      <button id="rv-prev" onclick="pagerRv(-1)">Previous</button>
+      <span id="rv-page-info"></span>
+      <button id="rv-next" onclick="pagerRv(1)">Next</button>
+    </div>
+  </section>
+
+  <!-- STAFF -->
+  <section id="tab-staff" class="tab">
+    <div class="filters">
+      <label>Shop
+        <select id="staff-shop">
+          <option value="">All shops</option>
+        </select>
+      </label>
+      <label>From <input type="date" id="staff-from"></label>
+      <label>To <input type="date" id="staff-to"></label>
+      <button onclick="loadStaff()">Apply</button>
+      <button class="secondary" onclick="resetFilters('staff')">Reset</button>
+    </div>
+    <div class="count" id="staff-count"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Primary shop</th>
+          <th class="num">Transactions</th>
+          <th class="num">Avg ticket</th>
+          <th class="num">Revenue</th>
+        </tr>
+      </thead>
+      <tbody id="staff-body"></tbody>
+    </table>
+  </section>
+
+</main>
+
+<script>
+const API = '';  // same-origin
+const state = {
+  shops: [],
+  baristas: [],
+  tx: { offset: 0, limit: 50 },
+  rv: { offset: 0, limit: 25 },
+};
+
+function money(v) {
+  if (v === null || v === undefined) return '—';
+  return '$' + Number(v).toFixed(2);
+}
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmtTs(ts) {
+  if (!ts) return '';
+  return ts.replace('T', ' ').slice(0, 16);
+}
+function fmtDate(ts) {
+  if (!ts) return '';
+  return ts.slice(0, 10);
+}
+
+async function api(path, params) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v !== '' && v !== null && v !== undefined) qs.set(k, v);
+  }
+  const url = API + path + (qs.toString() ? '?' + qs.toString() : '');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// ---- tab switching ----
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    document.getElementById('tab-' + tab).classList.add('active');
+    // lazy load
+    if (tab === 'sales') loadSales();
+    else if (tab === 'menu') loadMenu();
+    else if (tab === 'transactions') loadTransactions(0);
+    else if (tab === 'reviews') loadReviews(0);
+    else if (tab === 'staff') loadStaff();
+  });
+});
+
+// ---- populate shared selects ----
+async function initSelects() {
+  state.shops = await api('/api/shops');
+  state.baristas = await api('/api/baristas');
+
+  const shopOptions = state.shops.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  document.querySelectorAll('select[id$="-shop"]').forEach(sel => {
+    const keep = sel.options[0].outerHTML;
+    sel.innerHTML = keep + shopOptions;
+  });
+
+  const baristaOptions = state.baristas.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  const txBarista = document.getElementById('tx-barista');
+  txBarista.innerHTML = txBarista.options[0].outerHTML + baristaOptions;
+}
+
+function resetFilters(prefix) {
+  document.querySelectorAll(`#tab-${prefix === 'tx' ? 'transactions' : prefix === 'rv' ? 'reviews' : prefix} input, #tab-${prefix === 'tx' ? 'transactions' : prefix === 'rv' ? 'reviews' : prefix} select`).forEach(el => {
+    if (el.tagName === 'SELECT') el.selectedIndex = 0;
+    else el.value = '';
+  });
+  // re-trigger load
+  if (prefix === 'sales') loadSales();
+  if (prefix === 'menu') loadMenu();
+  if (prefix === 'tx') loadTransactions(0);
+  if (prefix === 'rv') loadReviews(0);
+  if (prefix === 'staff') loadStaff();
+}
+
+// ---- SHOPS tab ----
+async function loadShops() {
+  const shops = state.shops;
+  document.getElementById('shops-count').textContent = `${shops.length} shops`;
+  document.getElementById('shops-body').innerHTML = shops.map(s => `
+    <tr>
+      <td>${s.id}</td>
+      <td>${esc(s.name)}</td>
+      <td>${esc(s.location)}</td>
+      <td class="num">${s.seats}</td>
+      <td>${s.opened_on}</td>
+    </tr>
+  `).join('');
+}
+
+// ---- SALES tab ----
+async function loadSales() {
+  const body = document.getElementById('sales-body');
+  body.innerHTML = '<tr><td colspan="5" class="loading">Loading...</td></tr>';
+  try {
+    const rows = await api('/api/stats/daily', {
+      shop_id: document.getElementById('sales-shop').value,
+      date_from: document.getElementById('sales-from').value,
+      date_to: document.getElementById('sales-to').value,
+    });
+    document.getElementById('sales-count').textContent = `${rows.length} day-rows`;
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.day}</td>
+        <td>${esc(shopName(r.shop_id))}</td>
+        <td class="num">${r.tx_count}</td>
+        <td class="num">${money(r.revenue)}</td>
+        <td class="num">${money(r.avg_ticket)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" class="muted">No data</td></tr>';
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="error">${esc(e.message)}</td></tr>`;
+  }
+}
+
+// ---- MENU tab ----
+async function loadMenu() {
+  const body = document.getElementById('menu-body');
+  body.innerHTML = '<tr><td colspan="8" class="loading">Loading...</td></tr>';
+  try {
+    const rows = await api('/api/stats/items', {
+      shop_id: document.getElementById('menu-shop').value,
+      date_from: document.getElementById('menu-from').value,
+      date_to: document.getElementById('menu-to').value,
+    });
+    document.getElementById('menu-count').textContent = `${rows.length} menu items`;
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.id}</td>
+        <td>${esc(r.name)}</td>
+        <td>${esc(r.category)}</td>
+        <td class="num">${money(r.price)}</td>
+        <td class="num">${money(r.cost)}</td>
+        <td class="num">${r.units_sold ?? 0}</td>
+        <td class="num">${money(r.revenue)}</td>
+        <td class="num">${money(r.margin)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8" class="error">${esc(e.message)}</td></tr>`;
+  }
+}
+
+// ---- TRANSACTIONS tab ----
+async function loadTransactions(offsetChange) {
+  if (offsetChange === 0) state.tx.offset = 0;
+  const body = document.getElementById('tx-body');
+  body.innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
+  try {
+    const rows = await api('/api/transactions', {
+      shop_id: document.getElementById('tx-shop').value,
+      barista_id: document.getElementById('tx-barista').value,
+      date_from: document.getElementById('tx-from').value,
+      date_to: document.getElementById('tx-to').value,
+      limit: state.tx.limit,
+      offset: state.tx.offset,
+    });
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.id}</td>
+        <td>${fmtTs(r.ts)}</td>
+        <td>${esc(r.shop_name)}</td>
+        <td>${esc(r.barista_name)}</td>
+        <td>${esc((r.items || []).map(i => `${i.quantity}x ${i.item_name}`).join(', '))}</td>
+        <td class="num">${money(r.total)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="6" class="muted">No transactions</td></tr>';
+    document.getElementById('tx-count').textContent = `${rows.length} transactions (page offset ${state.tx.offset})`;
+    document.getElementById('tx-page-info').textContent = `rows ${state.tx.offset + 1}–${state.tx.offset + rows.length}`;
+    document.getElementById('tx-prev').disabled = state.tx.offset === 0;
+    document.getElementById('tx-next').disabled = rows.length < state.tx.limit;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6" class="error">${esc(e.message)}</td></tr>`;
+  }
+}
+function pagerTx(dir) {
+  state.tx.offset = Math.max(0, state.tx.offset + dir * state.tx.limit);
+  loadTransactions();
+}
+
+// ---- REVIEWS tab ----
+async function loadReviews(offsetChange) {
+  if (offsetChange === 0) state.rv.offset = 0;
+  const body = document.getElementById('rv-body');
+  body.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const rows = await api('/api/reviews', {
+      shop_id: document.getElementById('rv-shop').value,
+      min_rating: document.getElementById('rv-min').value,
+      max_rating: document.getElementById('rv-max').value,
+      date_from: document.getElementById('rv-from').value,
+      date_to: document.getElementById('rv-to').value,
+      limit: state.rv.limit,
+      offset: state.rv.offset,
+    });
+    body.innerHTML = rows.map(r => `
+      <div class="review">
+        <div class="meta">
+          <span class="rating-${r.rating}">★ ${r.rating}/5</span>
+          <span>${esc(r.shop_name)}</span>
+          <span>${fmtDate(r.ts)}</span>
+        </div>
+        <div class="text">${esc(r.text)}</div>
+      </div>
+    `).join('') || '<div class="muted">No reviews</div>';
+    document.getElementById('rv-count').textContent = `${rows.length} reviews (page offset ${state.rv.offset})`;
+    document.getElementById('rv-page-info').textContent = `rows ${state.rv.offset + 1}–${state.rv.offset + rows.length}`;
+    document.getElementById('rv-prev').disabled = state.rv.offset === 0;
+    document.getElementById('rv-next').disabled = rows.length < state.rv.limit;
+  } catch (e) {
+    body.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+  }
+}
+function pagerRv(dir) {
+  state.rv.offset = Math.max(0, state.rv.offset + dir * state.rv.limit);
+  loadReviews();
+}
+
+// ---- STAFF tab ----
+async function loadStaff() {
+  const body = document.getElementById('staff-body');
+  body.innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
+  try {
+    const rows = await api('/api/stats/barista', {
+      shop_id: document.getElementById('staff-shop').value,
+      date_from: document.getElementById('staff-from').value,
+      date_to: document.getElementById('staff-to').value,
+    });
+    document.getElementById('staff-count').textContent = `${rows.length} baristas`;
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.id}</td>
+        <td>${esc(r.name)}</td>
+        <td>${esc(r.shop_name)}</td>
+        <td class="num">${r.tx_count ?? 0}</td>
+        <td class="num">${money(r.avg_ticket)}</td>
+        <td class="num">${money(r.revenue)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6" class="error">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function shopName(id) {
+  const s = state.shops.find(s => s.id === id);
+  return s ? s.name : ('Shop ' + id);
+}
+
+// ---- boot ----
+(async () => {
+  await initSelects();
+  loadShops();
+})();
+</script>
+
+</body>
+</html>
